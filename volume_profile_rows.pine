@@ -1,0 +1,187 @@
+//@version=6
+indicator("PD RTH VP (Rows Layout)", overlay = true, max_lines_count = 10, max_labels_count = 20, max_bars_back = 5000)
+
+// ── INPUTS ──────────────────────────────────
+var string GRP_S = "Session"
+startHour   = input.int(9,  "Start Hour",   minval=0, maxval=23, group=GRP_S, inline="s")
+startMinute = input.int(30, "Start Minute", minval=0, maxval=59, group=GRP_S, inline="s")
+endHour     = input.int(16, "End Hour",     minval=0, maxval=23, group=GRP_S, inline="e")
+endMinute   = input.int(0,  "End Minute",   minval=0, maxval=59, group=GRP_S, inline="e")
+tzInput     = input.string("GMT-5", "Timezone", group=GRP_S)
+
+var string GRP_V = "Volume Profile"
+vaPct       = input.float(68.0, "Value Area %", minval=1, maxval=99, step=1, group=GRP_V) / 100.0
+layoutChoice = input.string("Number of Rows", "Rows Layout", options=["Number of Rows", "Ticks Per Row"], group=GRP_V)
+rowSize     = input.int(1000, "Row Size", minval=1, group=GRP_V,
+               tooltip="'Number of Rows' = divides session range into N equal rows. 'Ticks Per Row' = each row is N ticks tall.")
+
+var string GRP_L = "Style"
+pocClr      = input.color(color.yellow, "POC Color", group=GRP_L)
+vahClr      = input.color(color.teal,   "VAH Color", group=GRP_L)
+valClr      = input.color(color.teal,   "VAL Color", group=GRP_L)
+lnStyle     = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_L)
+lnWidth     = input.int(2, "Line Width", minval=1, maxval=4, group=GRP_L)
+lnRight     = input.int(15,"Right Extension", minval=1, group=GRP_L)
+boxClr      = input.color(color.new(color.black, 60), "Table Background", group=GRP_L)
+
+rthSess = str.format("{0,number,00}{1,number,00}-{2,number,00}{3,number,00}", startHour, startMinute, endHour, endMinute)
+lStyle  = lnStyle == "Dashed" ? line.style_dashed : lnStyle == "Dotted" ? line.style_dotted : line.style_solid
+
+// ── STATE ───────────────────────────────────
+// Raw intra-session data (collected during RTH, batch-processed on new day)
+var float[] rawHighs = array.new<float>()
+var float[] rawLows  = array.new<float>()
+var float[] rawVols  = array.new<float>()
+var float   dHi = na, var float dLo = na
+
+// Binned profile (populated during batch processing)
+var float[] pBins = array.new<float>()
+var float[] vBins = array.new<float>()
+
+// PD results
+var float   pdPOC = na, var float pdVAH = na, var float pdVAL = na
+var float   pdHi = na,  var float pdLo = na
+var int     pdEndBar = na
+var string  profType = "—"
+
+// Drawing objects
+var line    lnPOC = na, var line lnVAH = na, var line lnVAL = na
+var label   lblPOC = na, var label lblVAH = na, var label lblVAL = na
+var label   rPOC = na, var label rVAH = na, var label rVAL = na
+
+// ── SESSION DETECTION ───────────────────────
+isRTH    = not na(time("1", rthSess, tzInput))
+newDay   = isRTH and not isRTH[1]
+sessEnd  = isRTH[1] and not isRTH
+
+if sessEnd
+    pdEndBar := bar_index[1]
+
+// Only process recent bars (skip old history to avoid buffer errors)
+bool isRecent = last_bar_index - bar_index < 5000
+
+if not isRecent
+    true
+else
+    // ── ACCUMULATE RAW DATA (only recent RTH bars) ─
+    if isRTH
+        dHi := na(dHi) ? high : math.max(dHi, high)
+        dLo := na(dLo) ? low  : math.min(dLo, low)
+        array.push(rawHighs, high)
+        array.push(rawLows, low)
+        array.push(rawVols, volume)
+
+    // ── NEW DAY: BATCH PROCESS → CALC PD LEVELS ─
+    if newDay and array.size(rawHighs) > 0 and not na(dHi) and not na(dLo)
+        pdHi := dHi
+        pdLo := dLo
+
+        // 1. Calculate dynamic bin size
+        float dynBin = 0.0
+        if layoutChoice == "Ticks Per Row"
+            dynBin := rowSize * syminfo.mintick
+        else
+            float sessionRange = dHi - dLo
+            dynBin := sessionRange > 0 ? sessionRange / rowSize : syminfo.mintick
+        dynBin := math.max(dynBin, syminfo.mintick)  // failsafe
+
+        // 2. Distribute each candle's volume across all bins from Low to High
+        //    (matches TradingView FRVP behavior)
+        array.clear(pBins)
+        array.clear(vBins)
+        for k = 0 to array.size(rawHighs) - 1
+            float cHi  = array.get(rawHighs, k)
+            float cLo  = array.get(rawLows, k)
+            float vol  = array.get(rawVols, k)
+            float bLo  = math.floor(cLo / dynBin) * dynBin
+            float bHi  = math.floor(cHi / dynBin) * dynBin
+            int   nBins = math.max(int((bHi - bLo) / dynBin) + 1, 1)
+            float share = vol / nBins
+
+            float b = bLo
+            while b <= bHi
+                int idx = array.indexof(pBins, b)
+                if idx != -1
+                    array.set(vBins, idx, array.get(vBins, idx) + share)
+                else
+                    int pos = array.size(pBins)
+                    for i = 0 to math.max(array.size(pBins) - 1, 0)
+                        if i < array.size(pBins) and b < array.get(pBins, i)
+                            pos := i
+                            break
+                    array.insert(pBins, pos, b)
+                    array.insert(vBins, pos, share)
+                b += dynBin
+
+        // 3. Clear raw data immediately (memory management)
+        array.clear(rawHighs)
+        array.clear(rawLows)
+        array.clear(rawVols)
+
+        // 4. POC = max volume bin
+        int pocI = 0
+        float maxV = 0.0
+        for i = 0 to array.size(vBins) - 1
+            if array.get(vBins, i) > maxV
+                maxV := array.get(vBins, i)
+                pocI := i
+        pdPOC := array.get(pBins, pocI)
+
+        // 5. Value Area (expand from POC)
+        float totalV = array.sum(vBins)
+        float target = totalV * vaPct
+        int lo = pocI, int hi = pocI
+        float runV = maxV
+        int last = array.size(vBins) - 1
+        while runV < target
+            float above = hi < last ? array.get(vBins, hi + 1) : 0.0
+            float below = lo > 0    ? array.get(vBins, lo - 1) : 0.0
+            if above >= below
+                hi += 1
+                runV += above
+            else
+                lo -= 1
+                runV += below
+            if hi >= last and lo <= 0
+                break
+        pdVAH := array.get(pBins, hi) + dynBin
+        pdVAL := array.get(pBins, lo)
+
+        // 6. Profile shape
+        float dr = pdHi - pdLo
+        profType := dr <= 0 ? "—" : (pdPOC - pdLo) / dr >= 0.65 ? "p-Shape" : (pdPOC - pdLo) / dr <= 0.35 ? "b-Shape" : "D-Shape"
+
+        // 7. Clear bins (only needed for PD calc, already done)
+        array.clear(pBins)
+        array.clear(vBins)
+        dHi := na
+        dLo := na
+
+// ── DRAW (last bar only) ────────────────────
+if barstate.islast and not na(pdPOC)
+    line.delete(lnPOC),  line.delete(lnVAH),  line.delete(lnVAL)
+    label.delete(lblPOC), label.delete(lblVAH), label.delete(lblVAL)
+    label.delete(rPOC),   label.delete(rVAH),   label.delete(rVAL)
+
+    int x1 = na(pdEndBar) ? bar_index - 50 : pdEndBar
+    int x2 = bar_index + lnRight
+
+    lnPOC  := line.new(x1, pdPOC, x2, pdPOC, color=pocClr, style=lStyle, width=lnWidth)
+    lnVAH  := line.new(x1, pdVAH, x2, pdVAH, color=vahClr, style=lStyle, width=lnWidth)
+    lnVAL  := line.new(x1, pdVAL, x2, pdVAL, color=valClr, style=lStyle, width=lnWidth)
+    lblPOC := label.new(x1, pdPOC, str.tostring(pdPOC, format.mintick) + " | POC", color=pocClr, style=label.style_label_left, textcolor=color.white, size=size.small)
+    lblVAH := label.new(x1, pdVAH, str.tostring(pdVAH, format.mintick) + " | VAH", color=vahClr, style=label.style_label_left, textcolor=color.white, size=size.small)
+    lblVAL := label.new(x1, pdVAL, str.tostring(pdVAL, format.mintick) + " | VAL", color=valClr, style=label.style_label_left, textcolor=color.white, size=size.small)
+    rPOC   := label.new(x2, pdPOC, "POC | " + str.tostring(pdPOC, format.mintick), color=pocClr, style=label.style_label_right, textcolor=color.white, size=size.small)
+    rVAH   := label.new(x2, pdVAH, "VAH | " + str.tostring(pdVAH, format.mintick), color=vahClr, style=label.style_label_right, textcolor=color.white, size=size.small)
+    rVAL   := label.new(x2, pdVAL, "VAL | " + str.tostring(pdVAL, format.mintick), color=valClr, style=label.style_label_right, textcolor=color.white, size=size.small)
+
+// ── TABLE ───────────────────────────────────
+var table t = table.new(position.middle_right, 1, 4, bgcolor=boxClr, border_width=1, border_color=color.new(color.gray,50))
+
+if barstate.islast and not na(pdPOC)
+    color sc = profType == "p-Shape" ? color.new(color.green, 20) : profType == "b-Shape" ? color.new(color.red, 20) : color.new(color.blue, 20)
+    table.cell(t, 0, 0, "PD RTH VP", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 70))
+    table.cell(t, 0, 1, profType, text_color=color.white, text_size=size.large, bgcolor=sc)
+    table.cell(t, 0, 2, "POC " + str.tostring(pdPOC, format.mintick), text_color=pocClr, text_size=size.small, bgcolor=boxClr)
+    table.cell(t, 0, 3, "VAH " + str.tostring(pdVAH, format.mintick) + "  VAL " + str.tostring(pdVAL, format.mintick), text_color=vahClr, text_size=size.small, bgcolor=boxClr)
