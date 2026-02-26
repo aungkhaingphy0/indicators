@@ -4,7 +4,7 @@ A professional-grade Pine Script v6 indicator that displays both the **Previous 
 
 ## Main Indicator
 
-### [`RTH Volume profile.pine`](RTH%20Volume%20profile.pine)
+### [`RTH Volume profile.pine`](RTH%20VP/RTH%20Volume%20profile.pine)
 
 The flagship indicator combining both PD and Developing profiles in a single overlay.
 
@@ -19,7 +19,7 @@ The flagship indicator combining both PD and Developing profiles in a single ove
 
 ## Documentation
 
-See [`RTH volume profile usage.md`](RTH%20volume%20profile%20usage.md) for:
+See [`RTH volume profile usage.md`](RTH%20VP/RTH%20volume%20profile%20usage.md) for:
 - Technical functions & logic breakdown
 - Configuration settings guide
 - Example analysis & trading strategies
@@ -27,5 +27,5 @@ See [`RTH volume profile usage.md`](RTH%20volume%20profile%20usage.md) for:
 ## Quick Start
 
 1. Open TradingView → Pine Editor → New blank indicator
-2. Paste the contents of `RTH Volume profile.pine`
+2. Paste the contents of `RTH VP/RTH Volume profile.pine`
 3. Save and Add to Chart
