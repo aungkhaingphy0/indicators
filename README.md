@@ -1,23 +1,31 @@
-# Volume Profile Indicators for TradingView
+# RTH Volume Profile Indicator for TradingView
 
-This repository contains custom Pine Script indicators (v6) for TradingView that calculate and visualize the Regular Trading Hours (RTH) Volume Profile.
+A professional-grade Pine Script v6 indicator that displays both the **Previous Day (PD)** and **Developing** RTH Volume Profiles on any chart timeframe.
 
-## Featured Indicator
+## Main Indicator
 
-*   **`volume_profile_combined.pine` (Recommended)**: The most advanced version. It combines both the **Previous Day (PD)** and **Developing** Volume Profiles into a single script.
-    *   **Independent Toggles**: Turn PD or Developing profiles on/off separately.
-    *   **Infinite Rays**: Levels extend infinitely to the right for clear level identification.
-    *   **Price Scale Integration**: POC/VAH/VAL values are plotted directly on the price scale (y-axis).
-    *   **RTH Session Logic**: Automatically handles the 09:30–16:00 (GMT-5) session, promoting the developing profile to the PD profile at the close of each session.
-    *   **Row-Based Layout**: Supports "Number of Rows" and "Ticks Per Row" layout settings.
+### [`RTH Volume profile.pine`](RTH%20Volume%20profile.pine)
 
-## Standalone Indicators
+The flagship indicator combining both PD and Developing profiles in a single overlay.
 
-*   **`volume_profile_rows.pine`**: Dedicated to the Previous Day (PD) Volume Profile with advanced row layout settings (Number of Rows or Ticks Per Row).
-*   **`developing_volume_profile_rows.pine`**: Focused solely on the Developing Volume Profile for the current session.
-*   **`volume_profile.pine` (Legacy)**: A simpler PD Volume Profile using a fixed bin size approach.
+**Key Features:**
+- **Dual Profiles** — Toggle PD and Developing profiles independently
+- **1-Minute Precision** — Always uses 1-min data via `request.security_lower_tf`, accurate on any chart timeframe
+- **RTH Session** — 09:30–15:59 (GMT-5); developing profile auto-promotes to PD at session end
+- **Infinite Rays** — POC, VAH, VAL extend infinitely to the right
+- **Price Scale Labels** — Levels plotted directly on the y-axis
+- **Profile Classification** — Identifies p-Shape, b-Shape, or D-Shape distributions
+- **Pre-allocated Grid** — Optimized computation, no GC overhead
 
-## Getting Started
+## Documentation
 
-Please see the [GUIDE.md](GUIDE.md) for instructions on how to add these scripts to your TradingView account, and [USAGE.md](USAGE.md) for details on how to configure and interpret the indicators.
+See [`RTH volume profile usage.md`](RTH%20volume%20profile%20usage.md) for:
+- Technical functions & logic breakdown
+- Configuration settings guide
+- Example analysis & trading strategies
 
+## Quick Start
+
+1. Open TradingView → Pine Editor → New blank indicator
+2. Paste the contents of `RTH Volume profile.pine`
+3. Save and Add to Chart

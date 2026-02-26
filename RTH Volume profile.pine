@@ -1,0 +1,230 @@
+//@version=6
+// ──────────────────────────────────────────────
+//  Previous Day and Today Volume Profile  (v2 – Optimised)
+//  ● Pre-allocated grid – no push/clear GC overhead
+//  ● Shorter vars       – smaller bytecode
+//  ● 1-min intrabar     – accurate on any chart timeframe
+// ──────────────────────────────────────────────
+indicator("PD & Dev VP  v2", overlay=true,
+     max_lines_count=20, max_labels_count=40, max_bars_back=5000)
+
+// ━━  INPUTS  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var string G_T = "Toggles"
+showPD  = input.bool(true,  "Show PD Volume Profile",        group=G_T)
+showDev = input.bool(true,  "Show Developing Volume Profile", group=G_T)
+
+var string G_V = "Volume Profile"
+vaPct        = input.float(68.0, "Value Area %", minval=1, maxval=99, step=1, group=G_V) / 100.0
+layoutChoice = input.string("Number of Rows", "Rows Layout",
+                 options=["Number of Rows","Ticks Per Row"], group=G_V)
+rowSize      = input.int(1000, "Row Size", minval=1, group=G_V,
+                 tooltip="'Number of Rows' = divides range into N rows.\n'Ticks Per Row' = each row is N ticks tall.")
+
+var string G_PD = "PD Style"
+pdPocC = input.color(color.yellow, "POC",  group=G_PD)
+pdVahC = input.color(color.teal,   "VAH",  group=G_PD)
+pdValC = input.color(color.teal,   "VAL",  group=G_PD)
+pdStyl = input.string("Solid","Style", options=["Solid","Dashed","Dotted"], group=G_PD)
+pdWid  = input.int(2, "Width", minval=1, maxval=4, group=G_PD)
+
+var string G_DV = "Developing Style"
+dvPocC = input.color(color.orange, "POC",  group=G_DV)
+dvVahC = input.color(color.aqua,   "VAH",  group=G_DV)
+dvValC = input.color(color.aqua,   "VAL",  group=G_DV)
+dvStyl = input.string("Dashed","Style", options=["Solid","Dashed","Dotted"], group=G_DV)
+dvWid  = input.int(2, "Width", minval=1, maxval=4, group=G_DV)
+
+var string G_L = "General"
+lblOff = input.int(500, "Label Offset", minval=1, maxval=500, group=G_L,
+             tooltip="Bars to the right for label boxes (max 500).")
+lblPos = input.string("Both","Label Position", options=["Left","Right","Both"], group=G_L)
+boxClr = input.color(color.new(color.black,60), "Table BG", group=G_L)
+
+// derived constants
+pdLS   = pdStyl=="Dashed"?line.style_dashed : pdStyl=="Dotted"?line.style_dotted : line.style_solid
+dvLS   = dvStyl=="Dashed"?line.style_dashed : dvStyl=="Dotted"?line.style_dotted : line.style_solid
+wantL  = lblPos=="Left"  or lblPos=="Both"
+wantR  = lblPos=="Right" or lblPos=="Both"
+
+// ━━  SESSION  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+isRTH   = not na(time("1","0930-1559","GMT-5"))
+newDay  = isRTH and not isRTH[1]
+sessEnd = isRTH[1] and not isRTH
+
+// ━━  PD STATE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var int   pdX1 = na
+var float pdPOC = na, var float pdVAH = na, var float pdVAL = na
+var string pType = "—"
+
+var line  pLnP = na, var line  pLnH = na, var line  pLnL = na
+var label pLbP = na, var label pLbH = na, var label pLbL = na
+var label pRbP = na, var label pRbH = na, var label pRbL = na
+
+// ━━  DEVELOPING STATE  ━━━━━━━━━━━━━━━━━━━━━━
+// Raw arrays store 1-min candle data for accurate grid rebuilds.
+// Grid is pre-allocated to avoid push/clear GC overhead.
+var float[] dvH  = array.new<float>()    // 1-min highs
+var float[] dvL  = array.new<float>()    // 1-min lows
+var float[] dvV  = array.new<float>()    // 1-min volumes
+var float   dvHi = na, var float dvLo = na
+var int     dvX1 = na
+
+var int   MAX_BINS = 5000
+var float[] dvG   = array.new<float>(MAX_BINS, 0.0)  // pre-allocated grid
+
+var float dvPOC = na, var float dvVAH = na, var float dvVAL = na
+
+var line  dLnP = na, var line  dLnH = na, var line  dLnL = na
+var label dLbP = na, var label dLbH = na, var label dLbL = na
+var label dRbP = na, var label dRbH = na, var label dRbL = na
+
+// ━━  1-MIN DATA  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[m1H, m1L, m1V, m1R] = request.security_lower_tf(
+     syminfo.tickerid, "1",
+     [high, low, volume, not na(time("1","0930-1559","GMT-5"))])
+
+// ━━  SESSION END → promote Dev → PD  ━━━━━━━━
+if sessEnd
+    pdX1 := bar_index[1]
+    if not na(dvPOC)
+        pdPOC := dvPOC, pdVAH := dvVAH, pdVAL := dvVAL
+        float dr = dvHi - dvLo
+        pType := na(dr) or dr<=0 ? "—" :
+             (dvPOC-dvLo)/dr>=0.65 ? "p-Shape" :
+             (dvPOC-dvLo)/dr<=0.35 ? "b-Shape" : "D-Shape"
+    dvPOC := na, dvVAH := na, dvVAL := na
+
+// ━━  NEW DAY → reset  ━━━━━━━━━━━━━━━━━━━━━━━
+if newDay
+    array.clear(dvH), array.clear(dvL), array.clear(dvV)
+    dvHi := na, dvLo := na
+    dvPOC := na, dvVAH := na, dvVAL := na
+    dvX1 := bar_index
+
+// ━━  ACCUMULATE 1-MIN DATA  ━━━━━━━━━━━━━━━━━
+bool isRecent = last_bar_index - bar_index < 5000
+
+if isRecent and array.size(m1H) > 0
+    for k = 0 to array.size(m1H) - 1
+        if array.get(m1R, k)
+            float h = array.get(m1H, k)
+            float l = array.get(m1L, k)
+            float v = array.get(m1V, k)
+            dvHi := na(dvHi) ? h : math.max(dvHi, h)
+            dvLo := na(dvLo) ? l : math.min(dvLo, l)
+            array.push(dvH, h)
+            array.push(dvL, l)
+            array.push(dvV, v)
+
+// ━━  DEVELOPING CALC  (confirmed bar only)  ━━
+if showDev and isRTH and barstate.isconfirmed and array.size(dvH) > 0 and not na(dvHi) and not na(dvLo) and dvHi > dvLo
+    float bin = layoutChoice == "Ticks Per Row" ? rowSize * syminfo.mintick : (dvHi - dvLo) / rowSize
+    bin := math.max(bin, syminfo.mintick)
+
+    float bLo = math.floor(dvLo / bin) * bin
+    int   nB  = math.min(math.max(int((math.floor(dvHi / bin) * bin - bLo) / bin) + 1, 1), MAX_BINS)
+
+    // Zero-fill pre-allocated grid (no push/clear needed)
+    for i = 0 to nB - 1
+        array.set(dvG, i, 0.0)
+
+    // Distribute volume into grid
+    int rawN = array.size(dvH)
+    for k = 0 to rawN - 1
+        float cL = array.get(dvL, k), float cH = array.get(dvH, k), float vol = array.get(dvV, k)
+        int iL = int((math.floor(cL / bin) * bin - bLo) / bin)
+        int iH = int((math.floor(cH / bin) * bin - bLo) / bin)
+        iL := math.max(iL, 0), iH := math.min(iH, nB - 1)
+        float share = vol / math.max(iH - iL + 1, 1)
+        for j = iL to iH
+            array.set(dvG, j, array.get(dvG, j) + share)
+
+    // POC
+    int pocI = 0, float maxV = 0.0
+    for i = 0 to nB - 1
+        float gv = array.get(dvG, i)
+        if gv > maxV
+            maxV := gv, pocI := i
+    dvPOC := bLo + pocI * bin
+
+    // Value Area
+    float totalV = 0.0
+    for i = 0 to nB - 1
+        totalV += array.get(dvG, i)
+    float target = totalV * vaPct
+    int lo = pocI, int hi = pocI, float runV = maxV, int last = nB - 1
+    while runV < target
+        float above = hi < last ? array.get(dvG, hi + 1) : 0.0
+        float below = lo > 0    ? array.get(dvG, lo - 1) : 0.0
+        if above >= below
+            hi += 1, runV += above
+        else
+            lo -= 1, runV += below
+        if hi >= last and lo <= 0
+            break
+    dvVAH := bLo + hi * bin + bin
+    dvVAL := bLo + lo * bin
+
+// ━━  DRAW  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if barstate.islast
+    int rx = bar_index + lblOff
+    int lx = bar_index + 1
+
+    // — PD —
+    line.delete(pLnP), line.delete(pLnH), line.delete(pLnL)
+    label.delete(pLbP), label.delete(pLbH), label.delete(pLbL)
+    label.delete(pRbP), label.delete(pRbH), label.delete(pRbL)
+
+    if showPD and not na(pdPOC)
+        int x1 = nz(pdX1, bar_index - 50)
+        pLnP := line.new(x1,pdPOC,lx,pdPOC, color=pdPocC, style=pdLS, width=pdWid, extend=extend.right)
+        pLnH := line.new(x1,pdVAH,lx,pdVAH, color=pdVahC, style=pdLS, width=pdWid, extend=extend.right)
+        pLnL := line.new(x1,pdVAL,lx,pdVAL, color=pdValC, style=pdLS, width=pdWid, extend=extend.right)
+        if wantL
+            pLbP := label.new(x1,pdPOC, str.tostring(pdPOC,format.mintick)+" | PD POC", color=pdPocC, style=label.style_label_left, textcolor=color.white, size=size.small)
+            pLbH := label.new(x1,pdVAH, str.tostring(pdVAH,format.mintick)+" | PD VAH", color=pdVahC, style=label.style_label_left, textcolor=color.white, size=size.small)
+            pLbL := label.new(x1,pdVAL, str.tostring(pdVAL,format.mintick)+" | PD VAL", color=pdValC, style=label.style_label_left, textcolor=color.white, size=size.small)
+        if wantR
+            pRbP := label.new(rx,pdPOC,"PD POC", color=pdPocC, style=label.style_label_right, textcolor=color.white, size=size.small, textalign=text.align_right)
+            pRbH := label.new(rx,pdVAH,"PD VAH", color=pdVahC, style=label.style_label_right, textcolor=color.white, size=size.small, textalign=text.align_right)
+            pRbL := label.new(rx,pdVAL,"PD VAL", color=pdValC, style=label.style_label_right, textcolor=color.white, size=size.small, textalign=text.align_right)
+
+    // — Developing —
+    line.delete(dLnP), line.delete(dLnH), line.delete(dLnL)
+    label.delete(dLbP), label.delete(dLbH), label.delete(dLbL)
+    label.delete(dRbP), label.delete(dRbH), label.delete(dRbL)
+
+    if showDev and isRTH and not na(dvPOC)
+        int x1 = nz(dvX1, bar_index - 50)
+        dLnP := line.new(x1,dvPOC,lx,dvPOC, color=dvPocC, style=dvLS, width=dvWid, extend=extend.right)
+        dLnH := line.new(x1,dvVAH,lx,dvVAH, color=dvVahC, style=dvLS, width=dvWid, extend=extend.right)
+        dLnL := line.new(x1,dvVAL,lx,dvVAL, color=dvValC, style=dvLS, width=dvWid, extend=extend.right)
+        if wantL
+            dLbP := label.new(x1,dvPOC, str.tostring(dvPOC,format.mintick)+" | Dev POC", color=dvPocC, style=label.style_label_left, textcolor=color.white, size=size.small)
+            dLbH := label.new(x1,dvVAH, str.tostring(dvVAH,format.mintick)+" | Dev VAH", color=dvVahC, style=label.style_label_left, textcolor=color.white, size=size.small)
+            dLbL := label.new(x1,dvVAL, str.tostring(dvVAL,format.mintick)+" | Dev VAL", color=dvValC, style=label.style_label_left, textcolor=color.white, size=size.small)
+        if wantR
+            dRbP := label.new(rx,dvPOC,"Dev POC", color=dvPocC, style=label.style_label_right, textcolor=color.white, size=size.small, textalign=text.align_right)
+            dRbH := label.new(rx,dvVAH,"Dev VAH", color=dvVahC, style=label.style_label_right, textcolor=color.white, size=size.small, textalign=text.align_right)
+            dRbL := label.new(rx,dvVAL,"Dev VAL", color=dvValC, style=label.style_label_right, textcolor=color.white, size=size.small, textalign=text.align_right)
+
+// ━━  TABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var table t = table.new(position.middle_right, 1, 4,
+     bgcolor=boxClr, border_width=1, border_color=color.new(color.gray,50))
+
+if barstate.islast and showPD and not na(pdPOC)
+    color sc = pType=="p-Shape" ? color.new(color.green,20)
+             : pType=="b-Shape" ? color.new(color.red,20)
+             : color.new(color.blue,20)
+    table.cell(t,0,0,"PD RTH VP",  text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray,70))
+    table.cell(t,0,1, pType,       text_color=color.white, text_size=size.large,  bgcolor=sc)
+    table.cell(t,0,2,"POC "+str.tostring(pdPOC,format.mintick), text_color=pdPocC, text_size=size.small, bgcolor=boxClr)
+    table.cell(t,0,3,"VAH "+str.tostring(pdVAH,format.mintick)+"  VAL "+str.tostring(pdVAL,format.mintick), text_color=pdVahC, text_size=size.small, bgcolor=boxClr)
+
+// ━━  PRICE-SCALE PLOTS  ━━━━━━━━━━━━━━━━━━━━━
+plot(showPD  ? pdPOC : na, "PD POC",  pdPocC, display=display.price_scale)
+plot(showPD  ? pdVAH : na, "PD VAH",  pdVahC, display=display.price_scale)
+plot(showPD  ? pdVAL : na, "PD VAL",  pdValC, display=display.price_scale)
+plot(showDev ? dvPOC : na, "Dev POC", dvPocC, display=display.price_scale)
+plot(showDev ? dvVAH : na, "Dev VAH", dvVahC, display=display.price_scale)
+plot(showDev ? dvVAL : na, "Dev VAL", dvValC, display=display.price_scale)
