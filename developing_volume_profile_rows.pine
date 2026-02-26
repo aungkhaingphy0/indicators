@@ -1,0 +1,138 @@
+//@version=6
+indicator("Developing RTH VP (Rows)", overlay = true, max_lines_count = 10, max_labels_count = 20, max_bars_back = 5000)
+
+// ── INPUTS ──────────────────────────────────
+var string GRP_V = "Volume Profile"
+vaPct        = input.float(68.0, "Value Area %", minval=1, maxval=99, step=1, group=GRP_V) / 100.0
+layoutChoice = input.string("Number of Rows", "Rows Layout", options=["Number of Rows", "Ticks Per Row"], group=GRP_V)
+rowSize      = input.int(1000, "Row Size", minval=1, group=GRP_V,
+                tooltip="'Number of Rows' = divides session range into N equal rows.\n'Ticks Per Row' = each row is N ticks tall.")
+
+var string GRP_L = "Style"
+pocClr    = input.color(color.yellow, "POC Color", group=GRP_L)
+vahClr    = input.color(color.teal,   "VAH Color", group=GRP_L)
+valClr    = input.color(color.teal,   "VAL Color", group=GRP_L)
+lnStyle   = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_L)
+lnWidth   = input.int(2, "Line Width", minval=1, maxval=4, group=GRP_L)
+lnRight   = input.int(15,"Right Extension", minval=1, group=GRP_L)
+lblPos    = input.string("Both", "Label Position", options=["Left","Right","Both"], group=GRP_L)
+
+lStyle    = lnStyle == "Dashed" ? line.style_dashed : lnStyle == "Dotted" ? line.style_dotted : line.style_solid
+showLeft  = lblPos == "Left"  or lblPos == "Both"
+showRight = lblPos == "Right" or lblPos == "Both"
+
+// ── SESSION DETECTION (hardcoded RTH 09:30, EST) ──
+isRTH  = not na(time("1", "0930-1600", "GMT-5"))
+newDay = isRTH and not isRTH[1]
+
+// ── STATE ───────────────────────────────────
+var float[] rawHighs = array.new<float>()
+var float[] rawLows  = array.new<float>()
+var float[] rawVols  = array.new<float>()
+var float   dHi = na, var float dLo = na
+var int     sessStart = na
+
+// Developing results
+var float devPOC = na, var float devVAH = na, var float devVAL = na
+
+// Drawing objects
+var line  lnPOC = na, var line  lnVAH = na, var line  lnVAL = na
+var label lblPOC = na, var label lblVAH = na, var label lblVAL = na
+var label rPOC   = na, var label rVAH   = na, var label rVAL   = na
+
+// ── RESET ON NEW SESSION ────────────────────
+if newDay
+    array.clear(rawHighs), array.clear(rawLows), array.clear(rawVols)
+    dHi := na, dLo := na
+    devPOC := na, devVAH := na, devVAL := na
+    sessStart := bar_index
+
+// ── ACCUMULATE RAW DATA ─────────────────────
+if isRTH
+    dHi := na(dHi) ? high : math.max(dHi, high)
+    dLo := na(dLo) ? low  : math.min(dLo, low)
+    array.push(rawHighs, high)
+    array.push(rawLows,  low)
+    array.push(rawVols,  volume)
+
+// ── PROFILE CALCULATION (confirmed candle close only) ──
+if isRTH and barstate.isconfirmed and array.size(rawHighs) > 0 and not na(dHi) and not na(dLo) and dHi > dLo
+    // 1. Bin size
+    float dynBin = layoutChoice == "Ticks Per Row" ? rowSize * syminfo.mintick : (dHi - dLo) / rowSize
+    dynBin := math.max(dynBin, syminfo.mintick)
+
+    // 2. Fixed-size volume grid (direct index math — O(1) per lookup)
+    float baseLo  = math.floor(dLo / dynBin) * dynBin
+    float baseHi  = math.floor(dHi / dynBin) * dynBin
+    int   numBins = int((baseHi - baseLo) / dynBin) + 1
+    numBins := math.max(numBins, 1)
+
+    var float[] vGrid = array.new<float>()
+    array.clear(vGrid)
+    for _i = 0 to numBins - 1
+        array.push(vGrid, 0.0)
+
+    // 3. Distribute volume using index math (no searching)
+    for k = 0 to array.size(rawHighs) - 1
+        float cLo  = array.get(rawLows, k)
+        float cHi  = array.get(rawHighs, k)
+        float vol  = array.get(rawVols, k)
+        int   iLo  = int((math.floor(cLo / dynBin) * dynBin - baseLo) / dynBin)
+        int   iHi  = int((math.floor(cHi / dynBin) * dynBin - baseLo) / dynBin)
+        iLo := math.max(iLo, 0)
+        iHi := math.min(iHi, numBins - 1)
+        int   span = math.max(iHi - iLo + 1, 1)
+        float share = vol / span
+        for j = iLo to iHi
+            array.set(vGrid, j, array.get(vGrid, j) + share)
+
+    // 4. POC = max volume bin
+    int   pocI = 0
+    float maxV = 0.0
+    for i = 0 to numBins - 1
+        float v = array.get(vGrid, i)
+        if v > maxV
+            maxV := v
+            pocI := i
+    devPOC := baseLo + pocI * dynBin
+
+    // 5. Value Area (expand from POC)
+    float totalV = array.sum(vGrid)
+    float target = totalV * vaPct
+    int   lo = pocI, int hi = pocI
+    float runV = maxV
+    int   last = numBins - 1
+    while runV < target
+        float above = hi < last ? array.get(vGrid, hi + 1) : 0.0
+        float below = lo > 0    ? array.get(vGrid, lo - 1) : 0.0
+        if above >= below
+            hi   += 1
+            runV += above
+        else
+            lo   -= 1
+            runV += below
+        if hi >= last and lo <= 0
+            break
+    devVAH := baseLo + hi * dynBin + dynBin
+    devVAL := baseLo + lo * dynBin
+
+// ── DRAW (last bar only) ────────────────────
+if barstate.islast and not na(devPOC)
+    line.delete(lnPOC),  line.delete(lnVAH),  line.delete(lnVAL)
+    label.delete(lblPOC), label.delete(lblVAH), label.delete(lblVAL)
+    label.delete(rPOC),   label.delete(rVAH),   label.delete(rVAL)
+
+    int x1 = na(sessStart) ? bar_index - 50 : sessStart
+    int x2 = bar_index + lnRight
+
+    lnPOC := line.new(x1, devPOC, x2, devPOC, color=pocClr, style=lStyle, width=lnWidth)
+    lnVAH := line.new(x1, devVAH, x2, devVAH, color=vahClr, style=lStyle, width=lnWidth)
+    lnVAL := line.new(x1, devVAL, x2, devVAL, color=valClr, style=lStyle, width=lnWidth)
+    if showLeft
+        lblPOC := label.new(x1, devPOC, str.tostring(devPOC, format.mintick) + " | POC", color=pocClr, style=label.style_label_left, textcolor=color.white, size=size.small)
+        lblVAH := label.new(x1, devVAH, str.tostring(devVAH, format.mintick) + " | VAH", color=vahClr, style=label.style_label_left, textcolor=color.white, size=size.small)
+        lblVAL := label.new(x1, devVAL, str.tostring(devVAL, format.mintick) + " | VAL", color=valClr, style=label.style_label_left, textcolor=color.white, size=size.small)
+    if showRight
+        rPOC := label.new(x2, devPOC, "POC | " + str.tostring(devPOC, format.mintick), color=pocClr, style=label.style_label_right, textcolor=color.white, size=size.small)
+        rVAH := label.new(x2, devVAH, "VAH | " + str.tostring(devVAH, format.mintick), color=vahClr, style=label.style_label_right, textcolor=color.white, size=size.small)
+        rVAL := label.new(x2, devVAL, "VAL | " + str.tostring(devVAL, format.mintick), color=valClr, style=label.style_label_right, textcolor=color.white, size=size.small)

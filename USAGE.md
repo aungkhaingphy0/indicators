@@ -1,40 +1,36 @@
 # Usage & Configuration
 
-Both indicators provide similar core functionality but differ in how the volume bins are constructed.
+The indicators in this repository are designed to visualize Regular Trading Hours (RTH) Volume Profiles. The **Combined** version is the most feature-rich, while standalone scripts provide modular options.
 
-## Overview
+## Features (Combined Indicator)
 
-The indicators calculate the Volume Profile for the Regular Trading Hours (RTH) of the **previous session**. They present:
-*   **POC (Point of Control):** The price level with the highest traded volume.
-*   **VAH (Value Area High):** The upper boundary of the Value Area.
-*   **VAL (Value Area Low):** The lower boundary of the Value Area.
-*   **Profile Shape:** Classifies the previous day's trading behavior as a `p-Shape`, `b-Shape`, or `D-Shape`.
-*   A statistical table on the middle-right of the screen summarizing the data.
+The `volume_profile_combined.pine` script offers:
+*   **Dual View**: View both Previous Day (PD) and Developing profiles simultaneously or independently.
+*   **Infinite Rays**: POC, VAH, and VAL lines extend infinitely to the right (`extend.right`), making it easy to see how current price interacts with historical levels.
+*   **Price Scale labels**: Levels are automatically labeled on the right-side price scale (y-axis), reducing chart clutter.
+*   **Session Promoter**: At exactly 16:00 (RTH close), the developing profile is "promoted" to the PD profile. Before 09:30, only the PD profile is visible.
+*   **Profile Shape**: Classifies the PD session as `p-Shape`, `b-Shape`, or `D-Shape` based on volume distribution, displayed in a summary table.
 
 ## Configuration Inputs
 
-When you add the indicator to your chart or double-click it, you can customize the following settings:
+### Toggles (Combined Only)
+*   **Show PD Volume Profile**: Toggle the previous day's fixed levels.
+*   **Show Developing Volume Profile**: Toggle the current day's real-time building profile.
 
-### Session
-*   **Start/End Hour & Minute:** Defines your RTH session (default is 09:30 to 16:00).
-*   **Timezone:** Must match the exchange or your preferred timezone (e.g., `America/New_York` or `GMT-5`).
+### Calculation Settings
+*   **Value Area %**: The percentage of volume included in the Value Area (default: `68%`).
+*   **Rows Layout**: 
+    *   `Number of Rows`: Divides the session price range into a fixed number of bins.
+    *   `Ticks Per Row`: Each bin is a fixed height in ticks (e.g., 4 ticks for 1 ES point).
+*   **Row Size**: The numeric value for the chosen layout.
 
-### Volume Profile Calculations
-*   **Value Area %:** The percentage of total volume to include in the Value Area (default: is typically `68%` or `70%`).
-
-**In `volume_profile.pine`:**
-*   **Bin Size (pts):** The absolute size of each volume bin. Increase this for high-priced instruments (like NVDA or SPX) to avoid array limits.
-
-**In `volume_profile_rows.pine`:**
-*   **Rows Layout:** Choose between `Number of Rows` or `Ticks Per Row` (matching TradingView's native FRVP).
-*   **Row Size:** 
-    *   If using `Number of Rows`, this divides the session range into `N` equal rows.
-    *   If using `Ticks Per Row`, this sets the height of each row to `N` ticks.
-
-### Style
-*   Customize lines (POC, VAH, VAL colors, widths, styles), right extension lengths, and the background color of the data table.
+### Visuals
+*   **Style Groups**: Independent color and line style settings for PD and Developing profiles to distinguish them easily.
+*   **Label Offset**: Adjust how many bars to the right the label boxes are placed.
+*   **Label Position**: Choose to show labels on the `Left`, `Right`, or `Both` sides of the profiles.
 
 ## Interpreting the Data
-*   **D-Shape:** Indicates a balanced market where volume is distributed normally around the middle of the range.
-*   **p-Shape:** Indicates short-covering or an up-trend, with the bulk of the volume near the top.
-*   **b-Shape:** Indicates long-liquidation or a down-trend, with the bulk of the volume near the bottom.
+*   **D-Shape**: Balanced market; volume concentrated in the middle.
+*   **p-Shape**: Bullish bias/short covering; volume concentrated at the top.
+*   **b-Shape**: Bearish bias/long liquidation; volume concentrated at the bottom.
+
