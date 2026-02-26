@@ -1,5 +1,5 @@
 //@version=6
-indicator("RTH VP Combined", overlay = true, max_lines_count = 20, max_labels_count = 40, max_bars_back = 5000)
+indicator("Previous Day and Today Volume profile", overlay = true, max_lines_count = 20, max_labels_count = 40, max_bars_back = 5000)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  INPUTS
@@ -40,9 +40,9 @@ showLeft  = lblPos == "Left"  or lblPos == "Both"
 showRight = lblPos == "Right" or lblPos == "Both"
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  SESSION DETECTION (hardcoded RTH 09:30–16:00 EST)
+//  SESSION DETECTION (hardcoded RTH 09:30–15:59 EST)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-isRTH   = not na(time("1", "0930-1600", "GMT-5"))
+isRTH   = not na(time("1", "0930-1559", "GMT-5"))
 newDay  = isRTH and not isRTH[1]
 sessEnd = isRTH[1] and not isRTH
 
@@ -88,7 +88,7 @@ if sessEnd
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  1-MINUTE DATA (always use 1-min bars regardless of chart TF)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[m1H, m1L, m1V, m1RTH] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, volume, not na(time("1", "0930-1600", "GMT-5"))])
+[m1H, m1L, m1V, m1RTH] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, volume, not na(time("1", "0930-1559", "GMT-5"))])
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ACCUMULATE RTH DATA (from 1-min bars inside each chart bar)
